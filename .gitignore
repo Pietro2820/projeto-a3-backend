@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Variáveis de ambiente
+.env
+
+# VS Code
+.vscode/
+
+# Testes / cobertura (pytest, coverage.py)
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Mídia gerada em dev/teste (transcodificação) — arquivos grandes não vão pro git
+uploads/
+videos/
+*.m3u8
+*.ts
+*.mp4
+*.mov
+*.avi
+*.webm
+*.jpg
+*.jpeg
+
+# Banco local de desenvolvimento (fallback sem Supabase — app/database/local_store.py)
+data/
+
+# Artefatos locais de execução (sandbox/dev)
+.venv-test/
+dump.rdb
+
+# Logs e PID files do scripts/subir_tudo.py
+logs/
+
+# Sistema
+.DS_Store
+Thumbs.db
