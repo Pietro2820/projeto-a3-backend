@@ -25,6 +25,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from app.auth import sessoes, usuarios
 from app.database.videos import buscar_video, listar_videos
 from app.media import base_publica_s3, master_existe, origem_midia
 from app.recommendations import views_store
@@ -39,11 +40,24 @@ LIMITE_MINIMO_SIMILARIDADE = 0.1
 
 
 class WatchRequest(BaseModel):
-    """Corpo do POST /watch."""
+    """Corpo do POST /watch.
+
+    * video_id — UUID do vídeo;
+    * user_id  — LEGADO (clientes sem cookie): alimenta as recomendações.
+      Com SESSÃO válida ele é IGNORADO — a identidade é o cookie (não dá
+      para assistir "como outra pessoa");
+    * concluido — o player manda true no FIM da exibição (evento ended do
+      hls.js): é o que conta o DIA DE ESTUDO do streak, para o usuário da
+      sessão e só para estudante.
+    """
 
     video_id: str = Field(min_length=1, description="UUID do vídeo assistido")
     user_id: str | None = Field(
         default=None, description="Opcional — alimenta as recomendações pessoais"
+    )
+    concluido: bool = Field(
+        default=False,
+        description="Fim da exibição (evento ended) — registra o dia de estudo",
     )
 
 
@@ -335,18 +349,75 @@ def catalogo_detalhe(request: Request, video_id: str):
 # ---------------------------------------------------------------------------
 
 @router.post("/watch")
-def registrar_watch(payload: WatchRequest):
-    """Registra uma visualização (alimenta /trending e /recomendacoes)."""
+def registrar_watch(payload: WatchRequest, request: Request):
+    """Registra uma visualização (alimenta /trending e /recomendacoes).
+
+    Identidade: com SESSÃO válida o user_id do corpo é IGNORADO (cookie
+    vence — ninguém assiste "como outra pessoa"). Sem sessão, o legado
+    segue: view anônima com o user_id opcional do corpo.
+
+    Streak: `concluido=true` é o FIM da exibição — grava o dia de estudo
+    (fuso de Brasília, 1x/dia) SÓ para estudante com sessão e SÓ quando o
+    vídeo existe. Falha de streak NUNCA derruba a view.
+    """
+    usuario_da_sessao = _usuario_da_sessao(request)
+    user_id_efetivo = payload.user_id
+    if usuario_da_sessao:
+        user_id_efetivo = usuario_da_sessao["usuario_id"]
+
     try:
-        views = views_store.registrar_visualizacao(payload.video_id, payload.user_id)
+        views = views_store.registrar_visualizacao(
+            payload.video_id, user_id_efetivo
+        )
     except Exception as exc:  # Redis fora do ar não pode derrubar o player
         logger.exception("Falha ao registrar visualização no Redis")
         raise HTTPException(
             status_code=503, detail="Contador de visualizações indisponível"
         ) from exc
 
+    if payload.concluido and usuario_da_sessao:
+        _registrar_dia_de_estudo(payload.video_id, usuario_da_sessao)
+
     return {
         "video_id": payload.video_id,
         "views": views,
         "registrado": True,
     }
+
+
+def _usuario_da_sessao(request: Request) -> dict | None:
+    """Registro do usuário pelo cookie, ou None (anônimo/erro silencioso).
+
+    Falha de banco aqui NÃO é 503: a view continua válida sem identidade —
+    só perde o streak e as recomendações pessoais.
+    """
+    token = request.cookies.get(sessoes.CHAVE_COOKIE)
+    usuario_id = sessoes.resolver_sessao(token)
+    if not usuario_id:
+        return None
+    try:
+        return usuarios.buscar_por_id(usuario_id)
+    except Exception as exc:
+        logger.warning("Sessão não pôde ser resolvida para o /watch: %s", exc)
+        return None
+
+
+def _registrar_dia_de_estudo(video_id: str, usuario: dict) -> None:
+    """Dia de estudo da conclusão — best-effort, nunca quebra a rota.
+
+    Duas validações antes de gravar:
+      1. o vídeo EXISTE (dia atrelado a aula real, não a id inventado);
+      2. o papel é ESTUDANTE (professor/admin não têm streak — privacidade;
+         o /watch deles segue registrando view, sem dia de estudo).
+    """
+    if usuario.get("role") != "estudante":
+        return
+    try:
+        if buscar_video(video_id) is None:
+            logger.warning("Conclusão de vídeo inexistente ignorada: %s", video_id)
+            return
+        from app.streak import repo
+        dia = repo.registrar_dia(usuario["usuario_id"])
+        logger.info("Dia de estudo registrado (%s) para %s", dia, usuario["usuario_id"])
+    except Exception as exc:  # streak nunca derruba o /watch
+        logger.warning("Não registrei o dia de estudo: %s", exc)
