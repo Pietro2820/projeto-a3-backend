@@ -77,3 +77,14 @@ def hls_360p(video_teste, tmp_path_factory) -> Path:
 def diretorio_saida(tmp_path) -> Path:
     """Pasta de saída isolada por teste."""
     return tmp_path / "saida"
+
+
+@pytest.fixture(autouse=True)
+def _isola_env_s3(monkeypatch):
+    for var in (
+        "ENABLE_S3", "S3_BUCKET", "S3_ENDPOINT_URL", "S3_PUBLIC_URL",
+        "S3_ACCESS_KEY", "S3_SECRET_KEY",
+        "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+        "AWS_ENDPOINT_URL", "AWS_ENDPOINT_URL_S3", "AWS_SESSION_TOKEN",
+    ):
+        monkeypatch.delenv(var, raising=False)
