@@ -61,6 +61,24 @@ def dias_estudados(usuario_id: str) -> set[date]:
     return dias
 
 
+def resumo_dias() -> dict:
+    """Agregação da tabela dias_estudo para a VISÃO GERAL do admin.
+
+    Conta em cima da mesma fonte do /streak/meu: dias_registrados é o nº de
+    linhas (1 linha = 1 aluno concluiu vídeo naquele dia — idempotente pela
+    PK (usuario_id, dia)) e alunos_ativos é o nº de alunos distintos com
+    pelo menos um dia registrado. Nenhum dado por aluno sai daqui — só
+    totais agregados (a sequência de cada aluno continua privada).
+    """
+    client = get_client()
+    response = client.table(TABLE).select("usuario_id,dia").execute()
+    linhas = response.data or []
+    alunos = {
+        linha.get("usuario_id") for linha in linhas if linha.get("usuario_id")
+    }
+    return {"dias_registrados": len(linhas), "alunos_ativos": len(alunos)}
+
+
 def agora_utc() -> datetime:
     """Agora em UTC — separado para o teste injetar quando precisar."""
     return datetime.now(timezone.utc)

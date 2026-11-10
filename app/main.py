@@ -157,6 +157,7 @@ def health():
         "status": "ok",
         "rotas": ["/login", "/cadastro", "/trocar-senha",
                   "/admin/professores", "/admin/usuarios",
+                  "/admin/resumo", "/admin/videos",
                   "/upload", "/status/{video_id}", "/media/{video_id}",
                   "/catalogo", "/catalogo/{video_id}",
                   "/videos/{video_id}/relacionados",
