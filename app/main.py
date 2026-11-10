@@ -23,7 +23,7 @@ import mimetypes
 import os
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -57,15 +57,82 @@ app = FastAPI(
     description="API para upload, processamento e recomendação de vídeos educacionais.",
 )
 
-# CORS permissivo: o projeto é educacional e roda em localhost. Se um dia for
-# publicado, troque allow_origins pelos domínios reais do front.
+# CORS com lista EXPLÍCITA de origens (nunca "*"): com sessão por cookie
+# credenciado (allow_credentials=True) o padrão proíbe o coringa, e no
+# relatório de segurança a lista fechada é o correto. A cobre os dois jeitos
+# que o time usa: API servindo o front em /player (:8000) e Live Server
+# (:5500/:5501). Para liberar outra origem em produção:
+#   CORS_ORIGINS=https://meu-site.com,https://outro.com
+ORIGENS_PADRAO = (
+    "http://localhost:8000,http://127.0.0.1:8000,"
+    "http://localhost:5500,http://127.0.0.1:5500,"
+    "http://localhost:5501,http://127.0.0.1:5501"
+)
+CORS_ORIGINS = [
+    origem.strip()
+    for origem in os.getenv("CORS_ORIGINS", ORIGENS_PADRAO).split(",")
+    if origem.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,   # o cookie edustream_sessao cruza origem no dev
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------------------------------------------------------------------------
+# Cabeçalhos de segurança em TODA resposta (middleware mínimo, sem lib nova):
+#
+#   Cache-Control: no-store  — credenciais/respostas de auth e dados de
+#                              sessão não podem morar em cache de disco,
+#                              botão "voltar" ou proxies;
+#   X-Content-Type-Options   — navegador não "adivinha" MIME (nosniff);
+#   Referrer-Policy          — nada de URL interna vazando no Referer;
+#   CSP (só no /player)      — o front é todo self-hosted (hls.js vendado,
+#                              sem CDN/inline script): script-src 'self'
+#                              bloqueia XSS injetado;
+#   HSTS                     — só quando o tráfego é HTTPS (direto ou atrás
+#                              de proxy via X-Forwarded-Proto): em dev HTTP
+#                              puro o cabeçalho não existe e não atrapalha.
+# ---------------------------------------------------------------------------
+CSP_PLAYER = (
+    "default-src 'self'; "
+    "script-src 'self'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data: https:; "
+    "media-src 'self' blob: https:; "
+    "connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 https:; "
+    "font-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+)
+# Mídia HLS (segmentos .ts, playlists) se beneficia de cache — não forçamos
+# no-store nelas; TUDO o mais (HTML, JSON de auth/sessão) não pode cachear.
+CAMINHOS_CACHEAVEIS = ("/videos/", "/media/")
+
+
+@app.middleware("http")
+async def cabecalhos_de_seguranca(request: Request, call_next):
+    resposta = await call_next(request)
+    caminho = request.url.path
+
+    if not caminho.startswith(CAMINHOS_CACHEAVEIS):
+        resposta.headers.setdefault("Cache-Control", "no-store")
+    resposta.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resposta.headers.setdefault("Referrer-Policy", "no-referrer")
+
+    if caminho.startswith("/player"):
+        resposta.headers.setdefault("Content-Security-Policy", CSP_PLAYER)
+
+    encaminhado = request.headers.get("x-forwarded-proto", "")
+    eh_https = request.url.scheme == "https" or (
+        encaminhado.split(",")[0].strip().lower() == "https"
+    )
+    if eh_https:
+        resposta.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
+    return resposta
 
 app.include_router(auth_router)
 app.include_router(upload_router)
