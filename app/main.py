@@ -100,6 +100,11 @@ app.add_middleware(
 CSP_PLAYER = (
     "default-src 'self'; "
     "script-src 'self'; "
+    # worker-src: o hls.js roda o demuxer num Web Worker criado de blob:
+    # (enableWorker no js/player.js). Sem esta diretiva o script-src bloqueia
+    # o worker e o hls.js cai no demuxer da main thread — em alguns ambientes
+    # isso termina em MEDIA_ERROR fatal ("problema com a mídia").
+    "worker-src 'self' blob:; "
     "style-src 'self' 'unsafe-inline'; "
     "img-src 'self' data: https:; "
     "media-src 'self' blob: https:; "

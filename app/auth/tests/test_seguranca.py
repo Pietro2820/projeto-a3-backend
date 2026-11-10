@@ -111,6 +111,19 @@ def test_csp_no_player_nao_bloqueia_hls_vendado():
     assert "frame-ancestors 'none'" in csp     # anti-clickjacking
 
 
+def test_csp_permite_worker_blob_do_hlsjs():
+    """O hls.js demuxa num Web Worker criado de blob: (enableWorker).
+
+    Sem `worker-src 'self' blob:` o script-src bloqueia o worker e o hls.js
+    cai no demuxer da main thread — em parte dos navegadores isso termina em
+    MEDIA_ERROR fatal ("O navegador encontrou um problema com a mídia").
+    Regressão real vista em produção: este teste é a trava.
+    """
+    resposta = client.get("/player/login.html")
+    csp = resposta.headers.get("Content-Security-Policy", "")
+    assert "worker-src 'self' blob:" in csp
+
+
 # ---------------------------------------------------------------------------
 # Rate limit
 # ---------------------------------------------------------------------------
