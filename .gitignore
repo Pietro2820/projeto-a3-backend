@@ -43,3 +43,6 @@ logs/
 # Sistema
 .DS_Store
 Thumbs.db
+
+relatorio-*
+saida-pytest.txt
