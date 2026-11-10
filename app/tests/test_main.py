@@ -129,8 +129,9 @@ def test_get_no_upload_retorna_405():
     assert resposta.status_code == 405
 
 
-def test_upload_sem_campos_obrigatorios_retorna_422():
-    """Pydantic/FastAPI barram a requisição antes de tocar em disco ou banco."""
+def test_upload_sem_sessao_responde_401():
+    """/upload agora exige professor/admin: o GUARDA DE SESSÃO vira antes da
+    validação dos campos — requisição vazia sem cookie é 401 (não 422)."""
     resposta = client.post("/upload")
 
-    assert resposta.status_code == 422
+    assert resposta.status_code == 401

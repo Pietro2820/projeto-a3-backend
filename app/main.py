@@ -33,6 +33,7 @@ from app.admin.router import router as admin_router
 from app.upload.router import router as upload_router
 from app.status.router import router as status_router
 from app.recommendations.router import router as recommendations_router
+from app.videos.router import router as videos_router
 
 # O Starlette descobre o Content-Type pelo módulo `mimetypes` do Python, que
 # não conhece .m3u8/.ts em todas as versões. Sem o tipo correto alguns players
@@ -145,6 +146,7 @@ app.include_router(admin_router)
 app.include_router(upload_router)
 app.include_router(status_router)
 app.include_router(recommendations_router)
+app.include_router(videos_router)
 
 
 @app.get("/")

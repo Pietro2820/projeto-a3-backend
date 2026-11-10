@@ -92,6 +92,10 @@ class TabelaFalsa:
         ]
         return self
 
+    def delete(self):
+        self._modo = "delete"
+        return self
+
     # ----- execução -----
     def execute(self):
         if self._modo == "insert":
@@ -100,6 +104,8 @@ class TabelaFalsa:
             return self._executar_update()
         if self._modo == "upsert":
             return self._executar_upsert()
+        if self._modo == "delete":
+            return self._executar_delete()
         return self._executar_select()
 
     def _filtrar(self):
@@ -155,6 +161,12 @@ class TabelaFalsa:
                 linha.update(self._payload)
                 alteradas.append(linha)
         return FakeResponse(list(alteradas))
+
+    def _executar_delete(self):
+        apagadas = self._filtrar()
+        for linha in apagadas:
+            self._banco.remove(linha)
+        return FakeResponse(list(apagadas))
 
     def _executar_upsert(self):
         resultado = []

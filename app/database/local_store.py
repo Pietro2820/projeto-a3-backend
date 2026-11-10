@@ -91,12 +91,19 @@ def buscar(video_id: str) -> dict | None:
 
 def atualizar_status(video_id: str, status: str) -> dict | None:
     """Atualiza o status de um vídeo. None se ele não existir (sem erro)."""
+    return atualizar_video(video_id, {"status": status})
+
+
+def atualizar_video(video_id: str, campos: dict) -> dict | None:
+    """Atualiza os campos de um vídeo (merge). None se ele não existir."""
+    if not campos:
+        return buscar(video_id)
     with _lock:
         videos = _ler()
         encontrado = None
         for video in videos:
             if video.get("video_id") == video_id:
-                video["status"] = status
+                video.update(campos)
                 encontrado = video
         if encontrado is None:
             return None
@@ -104,9 +111,25 @@ def atualizar_status(video_id: str, status: str) -> dict | None:
         return dict(encontrado)
 
 
-def listar(status: str | None = None) -> list[dict]:
-    """Lista vídeos, opcionalmente filtrando por status."""
+def remover_video(video_id: str) -> bool:
+    """Apaga o registro do vídeo. True se existia (e foi apagado)."""
+    with _lock:
+        videos = _ler()
+        restantes = [v for v in videos if v.get("video_id") != video_id]
+        if len(restantes) == len(videos):
+            return False  # nada tinha esse id — nada foi apagado
+        _escrever(restantes)
+        return True
+
+
+def listar(status: str | None = None, professor_id: str | None = None) -> list[dict]:
+    """Lista vídeos, opcionalmente filtrando por status e/ou dono."""
     videos = _ler()
     if status:
         videos = [video for video in videos if video.get("status") == status]
+    if professor_id:
+        videos = [
+            video for video in videos
+            if video.get("professor_id") == professor_id
+        ]
     return [dict(video) for video in videos]

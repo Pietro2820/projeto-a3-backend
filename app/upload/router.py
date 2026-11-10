@@ -5,7 +5,9 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+
+from app.auth import papeis
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +83,7 @@ def _enfileirar_processamento(video_id: str, file_path: str) -> str:
 
 @router.post("/upload")
 async def upload_video(
+    registro: dict = Depends(papeis.professor_ou_admin),
     file: UploadFile = File(...),
     titulo: str = Form(...),
     autor: str = Form(...),
@@ -88,6 +91,12 @@ async def upload_video(
     tags: str = Form(""),
     categoria: str = Form(""),
 ):
+    """Sobe um vídeo — SOMENTE professor ou admin (decisão do usuário).
+
+    O DONO do vídeo é o usuário da SESSÃO (registro['usuario_id']) — nunca
+    o campo `autor` do formulário, que é só o nome para EXIBIÇÃO no
+    catálogo. Quem sobe é que pode editar e apagar (app/videos/router.py).
+    """
     filename = file.filename or ""
     extension = Path(filename).suffix.lower()
 
@@ -137,6 +146,7 @@ async def upload_video(
         "tags": parse_tags(tags),
         "categoria": categoria.strip(),
         "autor": autor.strip(),
+        "professor_id": registro["usuario_id"],  # dono: sessão, não formulário
         "criado_em": datetime.now(timezone.utc).isoformat(),
         "status": "pending",
     }

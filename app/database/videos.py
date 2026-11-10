@@ -128,3 +128,57 @@ def listar_videos(status: str = None) -> list[dict]:
         query = query.eq("status", status)
     response = query.execute()
     return response.data
+
+
+def listar_por_professor(professor_id: str) -> list[dict]:
+    """
+    Lista SOMENTE os vídeos do professor dado — é o "Meus vídeos" do painel
+    (app/videos/router.py). Nos dois backends o filtro é do banco: quem
+    chama nunca vê vídeo de outra pessoa por descuido.
+    """
+    client = _cliente_supabase()
+    if client is None:
+        return local_store.listar(professor_id=professor_id)
+
+    response = (
+        client.table(TABLE)
+        .select("*")
+        .eq("professor_id", professor_id)
+        .execute()
+    )
+    return response.data
+
+
+def atualizar_video(video_id: str, campos: dict) -> dict | None:
+    """
+    Atualiza os campos dados (merge) e devolve o registro novo.
+    None quando o video_id não existe — a rota traduz para 404.
+    """
+    if not campos:
+        return buscar_video(video_id)
+
+    client = _cliente_supabase()
+    if client is None:
+        return local_store.atualizar_video(video_id, campos)
+
+    response = (
+        client.table(TABLE)
+        .update(campos)
+        .eq("video_id", video_id)
+        .execute()
+    )
+    return response.data[0] if response.data else None
+
+
+def remover_video(video_id: str) -> bool:
+    """
+    Apaga o registro do vídeo (metadados). Devolve True quando existia.
+    Os ARQUIVOS de mídia (uploads/ e VIDEOS_DIR) são limpos de forma
+    best-effort pela rota — apagar metadado não pode falhar por disco.
+    """
+    client = _cliente_supabase()
+    if client is None:
+        return local_store.remover_video(video_id)
+
+    response = client.table(TABLE).delete().eq("video_id", video_id).execute()
+    return bool(response.data)

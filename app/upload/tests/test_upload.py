@@ -3,20 +3,41 @@ import io
 import pytest
 from fastapi.testclient import TestClient
 
+from app.auth import papeis
 from app.main import app
 from app.upload import router
 
 client = TestClient(app)
 
+PROFESSOR_FALSO = {
+    "usuario_id": "11111111-1111-1111-1111-111111111111",
+    "nome": "Prof. dos Testes",
+    "email": "prof@escola.com",
+    "role": "professor",
+    "primeiro_acesso": False,
+}
+
 
 @pytest.fixture(autouse=True)
 def configurar_testes(tmp_path, monkeypatch):
+    """Isola disco/fila E AUTENTICA como professor.
+
+    O POST /upload agora exige papel professor/admin (decisão do usuário):
+    os testes de LÓGICA do upload sobrescrevem a dependência de papel com um
+    professor falso para exercerem a rota sem banco de usuários. Os testes
+    da CADEIA REAL de autorização (401 sem sessão, 403 estudante, dono
+    gravado de verdade) moram em app/videos/tests/test_router.py.
+    """
     monkeypatch.setattr(router, "UPLOAD_DIR", tmp_path)
     monkeypatch.setattr(router, "MAX_SIZE", 1024 * 1024)
     monkeypatch.setattr(router, "save_metadata", lambda metadata: metadata)
     # Isola a fila: testes unitários não publicam tasks no broker real.
     monkeypatch.setattr(router, "_enfileirar_processamento",
                         lambda video_id, file_path: "enfileirado")
+    # Guarda de papel substituída — estes testes não testam autenticação.
+    app.dependency_overrides[papeis.professor_ou_admin] = lambda: PROFESSOR_FALSO
+    yield
+    app.dependency_overrides.pop(papeis.professor_ou_admin, None)
 
 
 def dados_validos():
@@ -220,3 +241,24 @@ def test_banco_indisponivel_devolve_503_com_orientacao(monkeypatch):
 
     assert response.status_code == 503
     assert "schema.sql" in response.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Propriedade: o dono é a SESSÃO (migração 002), não o formulário
+# ---------------------------------------------------------------------------
+
+def test_upload_grava_professor_id_da_sessao(monkeypatch):
+    """O dono gravado é o usuario_id da sessão — `autor` é só exibição."""
+    gravados = []
+    monkeypatch.setattr(router, "save_metadata", lambda metadata: gravados.append(metadata) or metadata)
+
+    arquivo = io.BytesIO(b"conteudo falso de video")
+    response = client.post(
+        "/upload",
+        files={"file": ("video.mp4", arquivo, "video/mp4")},
+        data=dados_validos(),  # autor "Rafael" ≠ dono
+    )
+
+    assert response.status_code == 200
+    assert gravados[0]["professor_id"] == PROFESSOR_FALSO["usuario_id"]
+    assert gravados[0]["autor"] == "Rafael"  # nome de exibição segue no corpo
