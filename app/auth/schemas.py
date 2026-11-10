@@ -33,6 +33,23 @@ SENHAS_TRIVIAIS = frozenset({
 })
 
 
+def validar_forca_da_senha(valor: str) -> str:
+    """Regras compartilhadas de CADASTRO e TROCA DE SENHA.
+
+    Extraído para função livre de propósito: cadastro e troca de senha não
+    podem divergir com o tempo (um validator por classe tende a divergir).
+    """
+    if not valor:
+        raise ValueError("Informe sua senha.")
+    if len(valor) < SENHA_MINIMA:
+        raise ValueError(f"A senha deve ter pelo menos {SENHA_MINIMA} caracteres.")
+    if len(valor) > TAMANHO_MAXIMO:
+        raise ValueError(f"A senha deve ter no máximo {TAMANHO_MAXIMO} caracteres.")
+    if valor.lower() in SENHAS_TRIVIAIS:
+        raise ValueError("Esta senha é muito comum — escolha outra menos óbvia.")
+    return valor
+
+
 class LoginRequest(BaseModel):
     email: str
     senha: str
@@ -90,12 +107,22 @@ class CadastroRequest(BaseModel):
     @field_validator("senha")
     @classmethod
     def validar_senha(cls, valor: str) -> str:
-        if not valor:
-            raise ValueError("Informe sua senha.")
-        if len(valor) < SENHA_MINIMA:
-            raise ValueError(f"A senha deve ter pelo menos {SENHA_MINIMA} caracteres.")
-        if len(valor) > TAMANHO_MAXIMO:
-            raise ValueError(f"A senha deve ter no máximo {TAMANHO_MAXIMO} caracteres.")
-        if valor.lower() in SENHAS_TRIVIAIS:
-            raise ValueError("Esta senha é muito comum — escolha outra menos óbvia.")
-        return valor
+        return validar_forca_da_senha(valor)
+
+
+class TrocaSenhaRequest(BaseModel):
+    """Corpo do POST /trocar-senha (1º acesso do professor e troca comum).
+
+    A senha NOVA passa pelas MESMAS regras do cadastro (mínimo, tamanho e
+    lista de triviais) — não faz sentido aceitar como nova o que o cadastro
+    rejeitaria. A senha ATUAL não tem validador de força (é a que já está
+    gravada; o servidor só verifica se confere com verificar_senha).
+    """
+
+    senha_atual: str
+    nova_senha: str
+
+    @field_validator("nova_senha")
+    @classmethod
+    def validar_nova_senha(cls, valor: str) -> str:
+        return validar_forca_da_senha(valor)

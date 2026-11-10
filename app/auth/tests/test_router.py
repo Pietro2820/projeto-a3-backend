@@ -78,6 +78,10 @@ class TabelaFalsa:
             "nome": dados["nome"],
             "email": dados["email"],
             "senha_hash": dados["senha_hash"],
+            # Migração 002: papel e flag de 1º acesso fazem parte da linha
+            # (o default do banco é estudante/false — o store sempre manda).
+            "role": dados.get("role", "estudante"),
+            "deve_trocar_senha": dados.get("deve_trocar_senha", False),
             "criado_em": "2026-01-01T00:00:00+00:00",
         }
         self._banco.append(registro)

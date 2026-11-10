@@ -29,6 +29,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.media import VIDEOS_DIR, garantir_diretorio, status_midia_completo
 from app.auth.router import router as auth_router
+from app.admin.router import router as admin_router
 from app.upload.router import router as upload_router
 from app.status.router import router as status_router
 from app.recommendations.router import router as recommendations_router
@@ -140,6 +141,7 @@ async def cabecalhos_de_seguranca(request: Request, call_next):
     return resposta
 
 app.include_router(auth_router)
+app.include_router(admin_router)
 app.include_router(upload_router)
 app.include_router(status_router)
 app.include_router(recommendations_router)
@@ -149,11 +151,13 @@ app.include_router(recommendations_router)
 def health():
     return {
         "status": "ok",
-        "rotas": ["/login", "/cadastro",
+        "rotas": ["/login", "/cadastro", "/trocar-senha",
+                  "/admin/professores", "/admin/usuarios",
                   "/upload", "/status/{video_id}", "/media/{video_id}",
                   "/catalogo", "/catalogo/{video_id}",
                   "/videos/{video_id}/relacionados",
-                  "/recomendacoes/{user_id}", "/trending", "/watch"],
+                  "/recomendacoes/{user_id}", "/trending", "/watch",
+                  "/meus-videos"],
         "player": "/player/",
         "home": "/player/home.html",
     }
