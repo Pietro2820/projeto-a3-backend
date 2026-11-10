@@ -50,6 +50,19 @@ def buscar_por_email(email: str) -> dict | None:
     return response.data[0] if response.data else None
 
 
+def buscar_por_id(usuario_id: str) -> dict | None:
+    """Procura o usuário pela chave primária (usado pelo GET /sessao)."""
+    client = _cliente()
+    response = (
+        client.table(TABLE)
+        .select("*")
+        .eq("usuario_id", usuario_id)
+        .limit(1)
+        .execute()
+    )
+    return response.data[0] if response.data else None
+
+
 def criar_usuario(nome: str, email: str, senha: str) -> dict:
     """Insere um usuário novo com a senha hasheada (PBKDF2).
 

@@ -20,10 +20,27 @@ SENHA_MINIMA = 8
 NOME_MINIMO = 2
 TAMANHO_MAXIMO = 120
 
+# Senhas triviais bloqueadas no CADASTRO (defesa contra credenciais fáceis de
+# adivinhar — checagem literal, sem biblioteca nova). De propósito a lista NÃO
+# contém "senha12345": é a senha do usuário de teste documentada no
+# supabase/schema_usuarios.sql e usada por toda a suíte (pytest/Jest/E2E).
+SENHAS_TRIVIAIS = frozenset({
+    "12345678", "123456789", "1234567890", "12341234", "11223344", "87654321",
+    "password", "password1", "password123", "senha123", "senha1234",
+    "abc12345", "abcd1234", "qwerty123", "qwertyuiop", "1234qwer",
+    "iloveyou", "admin123", "admin1234", "letmein123", "welcome1",
+    "monkey123", "dragon123", "football1", "sunshine1", "princess1",
+})
+
 
 class LoginRequest(BaseModel):
     email: str
     senha: str
+    # "Lembrar de mim": só faz sentido no LOGIN. False (padrão) = cookie de
+    # sessão (some ao fechar o navegador); True = cookie com Max-Age
+    # (LEMBRAR_DIAS) e token com a mesma validade no servidor. Opcional para
+    # clientes antigos/curl não quebrarem.
+    lembrar: bool = False
 
     @field_validator("email")
     @classmethod
@@ -79,4 +96,6 @@ class CadastroRequest(BaseModel):
             raise ValueError(f"A senha deve ter pelo menos {SENHA_MINIMA} caracteres.")
         if len(valor) > TAMANHO_MAXIMO:
             raise ValueError(f"A senha deve ter no máximo {TAMANHO_MAXIMO} caracteres.")
+        if valor.lower() in SENHAS_TRIVIAIS:
+            raise ValueError("Esta senha é muito comum — escolha outra menos óbvia.")
         return valor
