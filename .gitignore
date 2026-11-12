@@ -19,8 +19,8 @@ htmlcov/
 coverage.xml
 
 # Mídia gerada em dev/teste (transcodificação) — arquivos grandes não vão pro git
-uploads/
-videos/
+/uploads/
+/videos/
 *.m3u8
 *.ts
 *.mp4

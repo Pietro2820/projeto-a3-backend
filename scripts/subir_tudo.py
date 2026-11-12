@@ -53,6 +53,62 @@ def porta_aberta(porta: int, host: str = "127.0.0.1") -> bool:
         return s.connect_ex((host, porta)) == 0
 
 
+def checar_ambiente() -> bool:
+    """Detecta ANTES de subir os problemas que dariam 'API não respondeu'.
+
+    As duas causas clássicas do launcher falhar em silêncio: python velho
+    (o projeto usa 'str | None', que exige 3.10+) e dependências faltando
+    no python em uso (rodou com o python do sistema em vez do venv). Dizer
+    isso AQUI é 10x mais claro do que um traceback perdido no logs/api.log.
+    """
+    if sys.version_info < (3, 10):
+        log(
+            f"✗ Python {sys.version_info.major}.{sys.version_info.minor} é velho "
+            "demais — o projeto usa 'str | None' (3.10+).\n"
+            "  Instale Python 3.10+ e recrie o venv:\n"
+            "  python -m venv venv  →  venv\\Scripts\\python.exe -m pip install -r requirements.txt"
+        )
+        return False
+
+    faltando = []
+    for modulo in ("fastapi", "uvicorn", "celery", "redis", "supabase"):
+        try:
+            __import__(modulo)
+        except ImportError:
+            faltando.append(modulo)
+    if faltando:
+        log(
+            "✗ Dependências faltando no python em uso: " + ", ".join(faltando) + "\n"
+            f"  Python atual: {sys.executable}\n"
+            "  Rode:  python -m pip install -r requirements.txt\n"
+            "  (ou use o venv: venv\\Scripts\\python.exe scripts\\subir_tudo.py)"
+        )
+        return False
+
+    log(f"✓ Python ok ({sys.version_info.major}.{sys.version_info.minor}) e dependências presentes")
+    return True
+
+
+def mostrar_fim_do_log(arquivo: Path, linhas: int = 30) -> None:
+    """Mostra o final do log na tela — o erro REAL sem abrir arquivo nenhum.
+
+    'A API não respondeu' sem o traceback é adivinhação: 9 de 10 vezes o
+    motivo está nas últimas linhas do logs/api.log (ModuleNotFoundError,
+    porta em uso, SyntaxError de edição recente...).
+    """
+    if not arquivo.exists():
+        log("(não chegou a escrever o log — processo nem começou)")
+        return
+    conteudo = arquivo.read_text(errors="replace").splitlines()
+    if not conteudo:
+        log("(logs/api.log vazio)")
+        return
+    log(f"---- últimas {min(linhas, len(conteudo))} linhas de {arquivo.name} ----")
+    for linha in conteudo[-linhas:]:
+        log(f"  {linha}")
+    log("-" * 60)
+
+
 def processo_vivo(pid: int | None) -> bool:
     if not pid:
         return False
@@ -157,7 +213,7 @@ def iniciar_processo(nome: str, args: list[str], log_name: str, pid_file: Path):
     return processo
 
 
-def aguardar_api(timeout: int = 30) -> bool:
+def aguardar_api(timeout: int = 45) -> bool:
     url = f"http://127.0.0.1:{PORTA_API}/"
     inicio = time.time()
     while time.time() - inicio < timeout:
@@ -184,9 +240,14 @@ def main() -> int:
     if porta_aberta(PORTA_API):
         log(
             f"✗ A porta {PORTA_API} já está em uso por OUTRO processo\n"
-            "  (um uvicorn aberto em outro terminal?). Feche-o ou rode\n"
-            "  python scripts/parar_tudo.py e tente de novo."
+            "  (um uvicorn aberto em outro terminal?). Para achar e matar:\n"
+            f"    netstat -ano | findstr :{PORTA_API}      (o PID é a última coluna)\n"
+            "    taskkill /PID <pid> /F\n"
+            "  ou rode: python scripts/parar_tudo.py"
         )
+        return 1
+
+    if not checar_ambiente():
         return 1
 
     garantir_env()
@@ -207,10 +268,11 @@ def main() -> int:
 
     log("· aguardando a API responder...")
     if not aguardar_api():
-        log(
-            "✗ A API não respondeu em 30s. Veja o final de logs/api.log\n"
-            "  (porta ocupada? dependências faltando no venv?)"
-        )
+        log("✗ A API não respondeu em 45s. O motivo real está logo abaixo:")
+        mostrar_fim_do_log(LOGS / "api.log")
+        log("\n  Dica: se foi ModuleNotFoundError de 'app.videos', o módulo\n"
+            "  restaurado não está neste clone — rode o APLICAR-E-SUBIR.ps1\n"
+            "  do pacote app-videos-restaurado antes de subir de novo.")
         return 1
 
     log("✓ API no ar!")
