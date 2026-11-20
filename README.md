@@ -132,6 +132,9 @@ Formato do hash no banco (`app/auth/senhas.py`): `pbkdf2_sha256$<iterações>$<s
 | `GET /status/{video_id}` | Estado do processamento (Redis, fallback banco) |
 | `GET /media/{video_id}` | Diagnóstico da mídia no disco (master.m3u8, segmentos) |
 | `GET /catalogo` | Catálogo de vídeos (`?prontos=1&q=busca`) |
+| `GET /meus-videos` | Vídeos do professor da sessão (qualquer status) |
+| `PATCH /videos/{video_id}` | Edita metadados — só o dono (admin herda) |
+| `DELETE /videos/{video_id}` | Apaga vídeo e arquivos locais — só o dono (admin herda); usado pelos botões Excluir/Apagar do frontend |
 | `GET /trending`, `GET /recomendacoes/{user_id}` | Recomendações (Jaccard por tags + views) |
 | `POST /watch` | Registra visualização |
 | `/player/` | Serve o frontend (opcional — veja abaixo) |
