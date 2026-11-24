@@ -40,6 +40,11 @@ def configurar_testes(tmp_path, monkeypatch):
     app.dependency_overrides.pop(papeis.professor_ou_admin, None)
 
 
+# Cabeçalho ISO-BMFF mínimo ("ftyp" nos bytes 4..7): passa na conferência do
+# magic number sem precisar de um vídeo de verdade.
+MP4_FALSO = b"\x00\x00\x00\x18ftypmp42" + b"conteudo falso de video"
+
+
 def dados_validos():
     return {
         "titulo": "Introdução à Matemática",
@@ -51,7 +56,7 @@ def dados_validos():
 
 
 def test_upload_formato_valido():
-    arquivo = io.BytesIO(b"conteudo falso de video")
+    arquivo = io.BytesIO(MP4_FALSO)
 
     response = client.post(
         "/upload",
@@ -68,7 +73,7 @@ def test_upload_formato_valido():
 
 
 def test_arquivo_e_salvo_na_pasta_correta(tmp_path):
-    arquivo = io.BytesIO(b"conteudo falso de video")
+    arquivo = io.BytesIO(MP4_FALSO)
 
     response = client.post(
         "/upload",
@@ -114,7 +119,7 @@ def test_upload_sem_titulo():
     dados = dados_validos()
     dados.pop("titulo")
 
-    arquivo = io.BytesIO(b"conteudo falso de video")
+    arquivo = io.BytesIO(MP4_FALSO)
 
     response = client.post(
         "/upload",
@@ -129,7 +134,7 @@ def test_upload_sem_autor():
     dados = dados_validos()
     dados.pop("autor")
 
-    arquivo = io.BytesIO(b"conteudo falso de video")
+    arquivo = io.BytesIO(MP4_FALSO)
 
     response = client.post(
         "/upload",
@@ -144,7 +149,7 @@ def test_upload_com_titulo_vazio():
     dados = dados_validos()
     dados["titulo"] = "   "
 
-    arquivo = io.BytesIO(b"conteudo falso de video")
+    arquivo = io.BytesIO(MP4_FALSO)
 
     response = client.post(
         "/upload",
@@ -159,7 +164,7 @@ def test_upload_com_autor_vazio():
     dados = dados_validos()
     dados["autor"] = "   "
 
-    arquivo = io.BytesIO(b"conteudo falso de video")
+    arquivo = io.BytesIO(MP4_FALSO)
 
     response = client.post(
         "/upload",
@@ -176,7 +181,7 @@ def test_upload_com_autor_vazio():
 
 def test_resposta_inclui_fila_e_status_url():
     """O front usa status_url para acompanhar o processamento via polling."""
-    arquivo = io.BytesIO(b"conteudo falso de video")
+    arquivo = io.BytesIO(MP4_FALSO)
 
     response = client.post(
         "/upload",
@@ -196,7 +201,7 @@ def test_processamento_e_enfileirado_com_video_id_e_caminho(tmp_path, monkeypatc
         lambda video_id, file_path: chamadas.append((video_id, file_path)) or "enfileirado",
     )
 
-    arquivo = io.BytesIO(b"conteudo falso de video")
+    arquivo = io.BytesIO(MP4_FALSO)
     response = client.post(
         "/upload",
         files={"file": ("video.mp4", arquivo, "video/mp4")},
@@ -214,7 +219,7 @@ def test_broker_fora_do_ar_nao_derruba_o_upload(monkeypatch):
 
     monkeypatch.setattr(router, "_enfileirar_processamento", _fila_indisponivel)
 
-    arquivo = io.BytesIO(b"conteudo falso de video")
+    arquivo = io.BytesIO(MP4_FALSO)
     response = client.post(
         "/upload",
         files={"file": ("video.mp4", arquivo, "video/mp4")},
@@ -232,7 +237,7 @@ def test_banco_indisponivel_devolve_503_com_orientacao(monkeypatch):
 
     monkeypatch.setattr(router, "save_metadata", _boom)
 
-    arquivo = io.BytesIO(b"conteudo falso de video")
+    arquivo = io.BytesIO(MP4_FALSO)
     response = client.post(
         "/upload",
         files={"file": ("video.mp4", arquivo, "video/mp4")},
@@ -252,7 +257,7 @@ def test_upload_grava_professor_id_da_sessao(monkeypatch):
     gravados = []
     monkeypatch.setattr(router, "save_metadata", lambda metadata: gravados.append(metadata) or metadata)
 
-    arquivo = io.BytesIO(b"conteudo falso de video")
+    arquivo = io.BytesIO(MP4_FALSO)
     response = client.post(
         "/upload",
         files={"file": ("video.mp4", arquivo, "video/mp4")},
@@ -262,3 +267,69 @@ def test_upload_grava_professor_id_da_sessao(monkeypatch):
     assert response.status_code == 200
     assert gravados[0]["professor_id"] == PROFESSOR_FALSO["usuario_id"]
     assert gravados[0]["autor"] == "Rafael"  # nome de exibição segue no corpo
+
+
+# ---------------------------------------------------------------------------
+# Magic number: o CONTEÚDO tem de bater com a extensão
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "nome,conteudo",
+    [
+        ("aula.mp4", b"\x00\x00\x00\x18ftypisom" + b"x" * 20),
+        ("aula.mov", b"\x00\x00\x00\x14ftypqt  " + b"x" * 20),
+        ("aula.avi", b"RIFF\x00\x00\x00\x00AVI LIST" + b"x" * 20),
+        ("aula.webm", b"\x1aE\xdf\xa3" + b"x" * 20),
+    ],
+)
+def test_aceita_quando_o_conteudo_bate_com_a_extensao(nome, conteudo):
+    response = client.post(
+        "/upload",
+        files={"file": (nome, io.BytesIO(conteudo), "video/mp4")},
+        data=dados_validos(),
+    )
+
+    assert response.status_code == 200
+
+
+def test_executavel_renomeado_para_mp4_e_recusado(tmp_path):
+    exe = io.BytesIO(b"MZ\x90\x00\x03\x00\x00\x00" + b"\x00" * 40)
+
+    response = client.post(
+        "/upload",
+        files={"file": ("virus.mp4", exe, "video/mp4")},
+        data=dados_validos(),
+    )
+
+    assert response.status_code == 400
+    assert "não é um vídeo mp4" in response.json()["detail"]
+    # Nada foi gravado no disco: a checagem vem ANTES de salvar.
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_webm_com_conteudo_de_mp4_e_recusado():
+    response = client.post(
+        "/upload",
+        files={"file": ("aula.webm", io.BytesIO(MP4_FALSO), "video/webm")},
+        data=dados_validos(),
+    )
+
+    assert response.status_code == 400
+
+
+def test_arquivo_vazio_e_recusado():
+    response = client.post(
+        "/upload",
+        files={"file": ("vazio.mp4", io.BytesIO(b""), "video/mp4")},
+        data=dados_validos(),
+    )
+
+    assert response.status_code == 400
+
+
+def test_limite_de_tamanho_vem_do_env(monkeypatch):
+    monkeypatch.setenv("MAX_UPLOAD_MB", "10")
+    assert router._max_upload_mb() == 10
+    monkeypatch.setenv("MAX_UPLOAD_MB", "abc")
+    assert router._max_upload_mb() == 2048
+    monkeypatch.delenv("MAX_UPLOAD_MB")
+    assert router._max_upload_mb() == 2048
