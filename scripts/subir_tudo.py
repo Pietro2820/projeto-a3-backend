@@ -3,23 +3,23 @@
 Sobe a stack inteira com UM comando (Redis + worker Celery + API).
 
 Substitui os "4 terminais" do README para o dia a dia e para a apresentação:
-
     python scripts/subir_tudo.py            # tudo em background, logs em logs/
     python scripts/subir_tudo.py --demo     # ...e roda a demo E2E em seguida
     python scripts/subir_tudo.py --frente   # tudo neste terminal (Ctrl+C derruba)
     python scripts/parar_tudo.py            # derruba worker + API
 
 O que ele faz, em ordem:
-    1. cria .env a partir do .env.example se não existir (compose exige);
-    2. Redis: se a porta 6379 não responder, tenta `docker compose up -d redis`
-       (sem Docker/Redis a stack sobe, mas sem fila: upload não transcodifica);
-    3. worker Celery: `python -m celery -A app.queue.celery_app worker --pool=solo`
-       (--pool=solo é o que funciona no Windows, fora do Docker);
-    4. API: `python -m uvicorn app.main:app --port 8000`;
-    5. health check em GET / e imprime as URLs do player/home/docs.
+    1. Verifica se está na raiz do projeto.
+    2. Libera forçosamente as portas 8000 e 6379 se houver processos zumbis.
+    3. Cria .env a partir do .env.example se não existir.
+    4. Redis: se a porta 6379 não responder, tenta `docker compose up -d redis`.
+    5. Worker Celery: `python -m celery -A app.queue.celery_app worker --pool=solo`
+       (--pool=solo é o que funciona no Windows, fora do Docker).
+    6. API: `python -m uvicorn app.main:app --port 8000`.
+    7. Health check em GET / e imprime as URLs do player/home/docs.
 
 Os PIDs ficam em logs/*.pid — é assim que o parar_tudo.py sabe o que matar.
-Rode com o python do venv ativado (venv\\Scripts\\python.exe no Windows).
+Rode com o python do venv ativado (venv\Scripts\python.exe no Windows).
 """
 from __future__ import annotations
 
@@ -53,14 +53,31 @@ def porta_aberta(porta: int, host: str = "127.0.0.1") -> bool:
         return s.connect_ex((host, porta)) == 0
 
 
-def checar_ambiente() -> bool:
-    """Detecta ANTES de subir os problemas que dariam 'API não respondeu'.
+def liberar_porta_forcada(porta: int) -> None:
+    """Descobre e mata qualquer processo travado na porta (resolve o 'Address already in use')."""
+    if not porta_aberta(porta):
+        return
+    
+    log(f"⚠ Porta {porta} em uso. Tentando liberar automaticamente...")
+    if EH_WINDOWS:
+        try:
+            # Pega a saída do netstat e extrai o PID (última coluna)
+            resultado = subprocess.run(
+                f'netstat -ano | findstr ":{porta}" | findstr "LISTENING"',
+                capture_output=True, text=True, shell=True
+            )
+            if resultado.stdout:
+                # A linha é algo como: "  TCP    0.0.0.0:8000    0.0.0.0:0    LISTENING    25796"
+                pid_str = resultado.stdout.strip().split()[-1]
+                if pid_str.isdigit():
+                    log(f"  → Matando processo PID {pid_str} que travou a porta {porta}...")
+                    subprocess.run(["taskkill", "/F", "/PID", pid_str], capture_output=True)
+                    time.sleep(1) # Dá um tempo pro SO liberar a porta
+        except Exception:
+            pass # Se falhar, o script principal vai reclamar depois, mas tentamos.
 
-    As duas causas clássicas do launcher falhar em silêncio: python velho
-    (o projeto usa 'str | None', que exige 3.10+) e dependências faltando
-    no python em uso (rodou com o python do sistema em vez do venv). Dizer
-    isso AQUI é 10x mais claro do que um traceback perdido no logs/api.log.
-    """
+
+def checar_ambiente() -> bool:
     if sys.version_info < (3, 10):
         log(
             f"✗ Python {sys.version_info.major}.{sys.version_info.minor} é velho "
@@ -90,19 +107,20 @@ def checar_ambiente() -> bool:
 
 
 def mostrar_fim_do_log(arquivo: Path, linhas: int = 30) -> None:
-    """Mostra o final do log na tela — o erro REAL sem abrir arquivo nenhum.
-
-    'A API não respondeu' sem o traceback é adivinhação: 9 de 10 vezes o
-    motivo está nas últimas linhas do logs/api.log (ModuleNotFoundError,
-    porta em uso, SyntaxError de edição recente...).
-    """
     if not arquivo.exists():
         log("(não chegou a escrever o log — processo nem começou)")
         return
-    conteudo = arquivo.read_text(errors="replace").splitlines()
-    if not conteudo:
-        log("(logs/api.log vazio)")
+    
+    try:
+        conteudo = arquivo.read_text(errors="replace").splitlines()
+    except PermissionError:
+        log(f"(não foi possível ler {arquivo.name} pois o processo ainda o mantém aberto no Windows)")
         return
+
+    if not conteudo:
+        log(f"({arquivo.name} vazio)")
+        return
+        
     log(f"---- últimas {min(linhas, len(conteudo))} linhas de {arquivo.name} ----")
     for linha in conteudo[-linhas:]:
         log(f"  {linha}")
@@ -156,20 +174,30 @@ def matar(pid: int | None) -> bool:
 
 
 def parar_instancias_antigas() -> None:
-    """Evita 'address already in use' de uma execução anterior nossa."""
+    """Evita 'address already in use' de uma execução anterior."""
+    # 1. Tenta matar pelos PIDs salvos
     for arquivo in (PID_WORKER, PID_API):
         pid = ler_pid(arquivo)
         if matar(pid):
-            log(f"· parando instância anterior (pid {pid})")
+            log(f"· parando instância anterior registrada (pid {pid})")
         arquivo.unlink(missing_ok=True)
-    time.sleep(1)
+    
+    # 2. Garantia extra: varre e mata o que estiver travando as portas
+    liberar_porta_forcada(PORTA_API)
+    liberar_porta_forcada(PORTA_REDIS)
+    
+    time.sleep(1.5) # Tempo de respiro para o SO liberar os sockets
 
 
 def garantir_env() -> None:
     env = RAIZ / ".env"
     if not env.exists():
-        shutil.copyfile(RAIZ / ".env.example", env)
-        log("· .env criado a partir do .env.example (vazio mesmo, ok)")
+        exemplo = RAIZ / ".env.example"
+        if exemplo.exists():
+            shutil.copyfile(exemplo, env)
+            log("· .env criado a partir do .env.example")
+        else:
+            log("⚠ .env.example não encontrado. Crie um arquivo .env manualmente.")
 
 
 def garantir_redis() -> bool:
@@ -193,8 +221,8 @@ def garantir_redis() -> bool:
 
     log(
         "⚠ Redis indisponível: a API sobe, mas SEM fila — uploads não serão\n"
-        "  transcodificados e o /trending fica vazio. Para ter tudo:\n"
-        "  abra o Docker Desktop e rode: docker compose up -d redis"
+        "  transcodificados. Para ter tudo, abra o Docker Desktop e rode:\n"
+        "  docker compose up -d redis"
     )
     return False
 
@@ -227,6 +255,10 @@ def aguardar_api(timeout: int = 45) -> bool:
 
 
 def main() -> int:
+    if not (RAIZ / "app" / "main.py").exists():
+        log(f"✗ Erro: Este script deve ser rodado da raiz do projeto.\nDiretório atual: {RAIZ}")
+        return 1
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--demo", action="store_true",
                         help="roda scripts/demo_completo.py após subir tudo")
@@ -239,11 +271,8 @@ def main() -> int:
 
     if porta_aberta(PORTA_API):
         log(
-            f"✗ A porta {PORTA_API} já está em uso por OUTRO processo\n"
-            "  (um uvicorn aberto em outro terminal?). Para achar e matar:\n"
-            f"    netstat -ano | findstr :{PORTA_API}      (o PID é a última coluna)\n"
-            "    taskkill /PID <pid> /F\n"
-            "  ou rode: python scripts/parar_tudo.py"
+            f"✗ A porta {PORTA_API} continua em uso após tentativa de limpeza.\n"
+            f"  Feche manualmente ou reinicie o terminal."
         )
         return 1
 
@@ -270,33 +299,35 @@ def main() -> int:
     if not aguardar_api():
         log("✗ A API não respondeu em 45s. O motivo real está logo abaixo:")
         mostrar_fim_do_log(LOGS / "api.log")
-        log("\n  Dica: se foi ModuleNotFoundError de 'app.videos', o módulo\n"
-            "  restaurado não está neste clone — rode o APLICAR-E-SUBIR.ps1\n"
-            "  do pacote app-videos-restaurado antes de subir de novo.")
+        log("\n  💡 Dicas comuns de falha na inicialização:")
+        log("     1. Erro de sintaxe em algum arquivo .py recém-editado.")
+        log("     2. Variável de ambiente obrigatória faltando no .env.")
+        log("     3. Conflito de importação (ex: nome de arquivo igual ao de um módulo).")
         return 1
 
-    log("✓ API no ar!")
-    log(f"    Home do player:  http://localhost:{PORTA_API}/player/home.html")
-    log(f"    Watch (player):  http://localhost:{PORTA_API}/player/")
-    log(f"    Docs da API:     http://localhost:{PORTA_API}/docs")
+    log("✅ API no ar com sucesso!")
+    log(f"   🌐 Home do player:  http://localhost:{PORTA_API}/player/home.html")
+    log(f"   📺 Watch (player):  http://localhost:{PORTA_API}/player/")
+    log(f"   📚 Docs da API:     http://localhost:{PORTA_API}/docs")
 
     if args.demo:
         log("\n== rodando a demo E2E (upload → transcode → catálogo) ==")
         subprocess.run([sys.executable, str(RAIZ / "scripts" / "demo_completo.py")], cwd=RAIZ)
 
     if args.frente:
-        log("\nCtrl+C para derrubar tudo.")
+        log("\nPressione Ctrl+C para derrubar tudo.")
         try:
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
-            log("\n· encerrando...")
+            log("\n· encerrando processos...")
             matar(worker.pid)
             matar(api.pid)
             PID_WORKER.unlink(missing_ok=True)
             PID_API.unlink(missing_ok=True)
+            log("✓ Tudo encerrado.")
     else:
-        log("\nTudo em background. Para derrubar: python scripts/parar_tudo.py")
+        log("\n🔄 Tudo rodando em background. Para derrubar, execute: python scripts/parar_tudo.py")
 
     return 0
 
