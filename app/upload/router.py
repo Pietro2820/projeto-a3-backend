@@ -15,8 +15,41 @@ router = APIRouter()
 
 ALLOWED_EXTENSIONS = {".mp4", ".avi", ".mov", ".webm"}
 
-# 500MB
-MAX_SIZE = 500 * 1024 * 1024
+
+def _max_upload_mb() -> int:
+    try:
+        return max(1, int(os.getenv("MAX_UPLOAD_MB", "2048")))
+    except ValueError:
+        return 2048
+
+
+# Tamanho máximo do upload: 2 GB por padrão, configurável no .env
+# (MAX_UPLOAD_MB=500, por exemplo).
+MAX_SIZE = _max_upload_mb() * 1024 * 1024
+
+# Quantos bytes do começo do arquivo bastam para reconhecer o formato.
+BYTES_ASSINATURA = 16
+
+
+def assinatura_confere(extension: str, cabecalho: bytes) -> bool:
+    """Confere o MAGIC NUMBER do arquivo (os primeiros bytes), não só o nome.
+
+    Extensão é só texto: um .exe renomeado para .mp4 passava direto e ia
+    parar no disco e na fila do FFmpeg. Aqui o conteúdo precisa bater com o
+    formato declarado:
+
+      .mp4 / .mov  -> caixa ISO-BMFF: bytes 4..7 = "ftyp" (ou "moov"/"mdat"/
+                      "wide"/"free" em .mov antigos do QuickTime)
+      .avi         -> "RIFF" .... "AVI "
+      .webm        -> cabeçalho EBML 1A 45 DF A3
+    """
+    if extension in (".mp4", ".mov"):
+        return cabecalho[4:8] in (b"ftyp", b"moov", b"mdat", b"wide", b"free")
+    if extension == ".avi":
+        return cabecalho[:4] == b"RIFF" and cabecalho[8:12] == b"AVI "
+    if extension == ".webm":
+        return cabecalho[:4] == b"\x1a\x45\xdf\xa3"
+    return False
 
 # Padrão ancorado na raiz do repositório: o worker Celery procura o original
 # pelo caminho absoluto devolvido aqui, então os dois processos precisam
@@ -114,7 +147,19 @@ async def upload_video(
     if size > MAX_SIZE:
         raise HTTPException(
             status_code=400,
-            detail="Arquivo excede o tamanho máximo de 500MB.",
+            detail=f"Arquivo excede o tamanho máximo de {MAX_SIZE // (1024 * 1024)} MB.",
+        )
+
+    cabecalho = file.file.read(BYTES_ASSINATURA)
+    file.file.seek(0)
+    if not assinatura_confere(extension, cabecalho):
+        logger.warning("Upload recusado: conteúdo não bate com %s", extension)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "O conteúdo do arquivo não é um vídeo "
+                f"{extension.lstrip('.')} válido."
+            ),
         )
 
     if not titulo.strip():
